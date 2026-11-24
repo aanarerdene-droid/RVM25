@@ -2,3 +2,7 @@
 .pairing-badge{display:inline-block;padding:8px;border:1px solid #00f0ff;color:#8cff00;font:9px/1.5 'Silkscreen',monospace;margin:0 0 8px}.pairing-connected{background:#1b1d4b;border:2px solid #8cff00;padding:16px;margin:14px 0}.pairing-connected[hidden],.pairing-camera[hidden]{display:none!important}.pairing-connected p{line-height:1.5}.pairing-actions{display:flex;gap:8px;flex-wrap:wrap}.pairing-actions button{flex:1}.pairing-receipt{margin:18px 0;border:1px solid #62589c;padding:12px}.pairing-receipt summary{cursor:pointer;color:#00f0ff;font:10px/1.4 'Silkscreen',monospace}.pairing-receipt .scan-code-form{margin:12px 0 0}
 
 .hardware-pill{display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px;border:1px solid #00f0ff;color:#bdeaf2;font:11px/1.3 'Pixelify Sans','JetBrains Mono',sans-serif}.hardware-pill.online{border-color:#8cff00;color:#8cff00}.hardware-dot{width:8px;height:8px;flex:none;background:#00aaba}.hardware-pill.online .hardware-dot{background:#8cff00;box-shadow:0 0 8px #8cff00;animation:hardware-pulse 1.4s steps(2,end) infinite}@keyframes hardware-pulse{50%{opacity:.45}}@media(prefers-reduced-motion:reduce){.hardware-pill.online .hardware-dot{animation:none}}
+/* Six equal navigation targets; retain the existing label and QR styles. */
+.phone .nav button{flex:1 1 0;min-width:44px;min-height:44px;padding-left:0;padding-right:0}
+#arcade .pac-canvas{max-width:100%;height:auto;touch-action:none}
+#arcade .world-dpad{touch-action:none}

@@ -146,7 +146,7 @@ class XOT17Handler(SimpleHTTPRequestHandler):
             if path in admin_pages or path.startswith('/admin/'):
                 if not auth_backend.is_admin(user): self._forbidden(page=True);return
                 if path in ('/admin','/admin/'): self.path='/index.html'
-            elif path=='/': self.path='/rewards.html'
+            elif path in ('/', '/game'): self.path='/rewards.html'
             elif path not in ('/rewards.html','/simulation.html'):
                 # Data files backing the operations dashboard are admin-only.
                 if not auth_backend.is_admin(user): self._forbidden();return
