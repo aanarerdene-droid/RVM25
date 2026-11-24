@@ -16,8 +16,9 @@ import urllib.request
 import uuid
 from urllib.parse import urlsplit
 
-BAUD = 9600
+BAUD = 115200
 RETRY_SECONDS = 3
+MAX_BACKOFF_SECONDS = 10
 
 
 def b64(data):
@@ -65,7 +66,9 @@ class Bridge:
             return
         with self.lock:
             self.serial_at = time.monotonic()
-            pairing = self.pairing_id if time.monotonic() - self.heartbeat_at <= 15 else None
+            # The server validates this pairing ID on every deposit. Keep the
+            # last confirmed ID during an outage; never attach a later pairing.
+            pairing = self.pairing_id
         if line == 'BOTTLE:1':
             if not pairing:
                 print('Bottle not credited: no recently confirmed active pairing.', flush=True)
@@ -73,6 +76,7 @@ class Bridge:
             event = {'machine_id': self.machine, 'bottles': 1, 'event_id': uuid.uuid4().hex, 'pairing_id': pairing}
             try:
                 self.pending.put_nowait(event)
+                print('Bottle detected; sending event to server.', flush=True)
             except queue.Full:
                 print('Bottle not credited: bridge queue is full.', file=sys.stderr, flush=True)
 
@@ -86,6 +90,9 @@ class Bridge:
         next_heartbeat = 0.0
         event = None
         next_retry = 0.0
+        retry_started = None
+        retry_delay = 1.0
+        slow_warning = False
         while self.running:
             now = time.monotonic()
             with self.lock:
@@ -97,42 +104,77 @@ class Bridge:
                     with self.lock:
                         self.pairing_id = response.get('pairing_id')
                         self.heartbeat_at = time.monotonic()
-                except (urllib.error.URLError, OSError, ValueError) as exc:
-                    print('Heartbeat failed:', exc, file=sys.stderr, flush=True)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (401, 403):
+                        print('Device key rejected (HTTP %s). Check the machine ID and key.' % exc.code, file=sys.stderr, flush=True)
+                    elif exc.code == 503:
+                        print('Machine not configured or server waking up (HTTP 503). Check Render settings if this persists.', file=sys.stderr, flush=True)
+                    else:
+                        print('Heartbeat unavailable (HTTP %s); retrying.' % exc.code, file=sys.stderr, flush=True)
+                except (urllib.error.URLError, OSError, ValueError):
+                    print('Server unreachable or waking up; retrying.', file=sys.stderr, flush=True)
                 next_heartbeat = time.monotonic() + 5
             if event is None:
-                try: event = self.pending.get_nowait()
+                try:
+                    event = self.pending.get_nowait()
+                    retry_started = time.monotonic(); retry_delay = 1.0; slow_warning = False
                 except queue.Empty: pass
             if event and now >= next_retry:
                 try:
                     result = send_json(self.url, self.machine, self.key, '/api/hardware/deposit', event)
-                    player = result.get('player', {})
-                    print('Credited player', player.get('id', '?'), 'rank', result.get('rank'),
-                          '+', result.get('earned_points'), 'points', flush=True)
+                    print('Bottle sent and credited: +%s points.' % result.get('earned_points', '?'), flush=True)
                     event = None
                 except urllib.error.HTTPError as exc:
-                    if 400 <= exc.code < 500:
-                        print('Deposit not credited (HTTP %s); pairing may have expired or event was already accepted.' % exc.code, file=sys.stderr, flush=True)
+                    if exc.code == 409:
+                        try: message = json.load(exc).get('error', '')
+                        except (ValueError, OSError, AttributeError): message = ''
+                        if message == 'Deposit already credited.':
+                            print('Bottle was already credited; duplicate retry ignored.', flush=True)
+                        else:
+                            print('Bottle was not confirmed (HTTP 409): pairing expired or changed. Check the account history before retrying.', file=sys.stderr, flush=True)
+                        event = None
+                    elif exc.code in (401, 403):
+                        print('Device key rejected (HTTP %s). Check the machine ID and key; event remains queued.' % exc.code, file=sys.stderr, flush=True)
+                        next_retry = time.monotonic() + MAX_BACKOFF_SECONDS
+                    elif 400 <= exc.code < 500:
+                        print('Bottle rejected (HTTP %s). Check pairing and server configuration.' % exc.code, file=sys.stderr, flush=True)
                         event = None
                     else:
-                        print('Deposit retry:', exc, file=sys.stderr, flush=True); next_retry = time.monotonic() + RETRY_SECONDS
-                except (urllib.error.URLError, OSError, ValueError) as exc:
-                    print('Deposit retry:', exc, file=sys.stderr, flush=True); next_retry = time.monotonic() + RETRY_SECONDS
+                        print('Server is waking up, please wait... (HTTP %s)' % exc.code, file=sys.stderr, flush=True)
+                        next_retry = time.monotonic() + retry_delay; retry_delay = min(retry_delay * 2, MAX_BACKOFF_SECONDS)
+                except (urllib.error.URLError, OSError, ValueError):
+                    print('Server is waking up or unreachable, please wait...', file=sys.stderr, flush=True)
+                    next_retry = time.monotonic() + retry_delay; retry_delay = min(retry_delay * 2, MAX_BACKOFF_SECONDS)
+            if event and retry_started and time.monotonic() - retry_started >= 60 and not slow_warning:
+                print('Server still unavailable after 60 seconds; the event is queued and retries will continue while the bridge runs.', file=sys.stderr, flush=True)
+                slow_warning = True
             time.sleep(.1)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', help='Serial port; auto-detect when omitted')
-    parser.add_argument('--url', default=os.environ.get('RVM_SERVER_URL', 'http://127.0.0.1:8000'))
+    parser.add_argument('--list-ports', action='store_true', help='List available serial ports and exit')
+    parser.add_argument('--baud', type=int, default=BAUD, help='Serial baud rate (default 115200)')
+    parser.add_argument('--url', default=os.environ.get('XOT17_URL') or os.environ.get('RVM_SERVER_URL', 'http://127.0.0.1:8000'))
     parser.add_argument('--machine', default='RVM-UB-01')
-    parser.add_argument('--key', default=os.environ.get('HARDWARE_API_KEY'), help='Device key; prefer HARDWARE_API_KEY environment variable')
     parser.add_argument('--pair-code', action='store_true', help='Print one short-lived pairing code and exit')
     args = parser.parse_args()
+    if args.list_ports:
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            parser.error('Install pyserial first: python -m pip install -r hardware/requirements.txt')
+        ports = list(list_ports.comports())
+        for port in ports: print('%s — %s' % (port.device, port.description or 'serial device'))
+        if not ports: print('No serial ports found. Connect the Arduino with a USB data cable.')
+        return
+    args.key = os.environ.get('HARDWARE_API_KEY')
     if not args.key or len(args.key.encode()) < 32:
-        parser.error('Set HARDWARE_API_KEY (or --key) to this machine’s unique key of at least 32 bytes.')
+        parser.error('Set HARDWARE_API_KEY to this machine’s unique key of at least 32 bytes.')
+    if args.baud <= 0: parser.error('--baud must be a positive number.')
     url = urlsplit(args.url)
-    if url.scheme not in ('http','https') or not url.netloc:
+    if url.scheme not in ('http','https') or not url.netloc or url.username or url.password or url.query or url.fragment:
         parser.error('--url must be an HTTP(S) server URL')
     if url.scheme != 'https' and url.hostname not in ('localhost','127.0.0.1','::1'):
         parser.error('Remote servers must use HTTPS to protect the device key')
@@ -150,12 +192,13 @@ def main():
                 port = args.port or find_port()
                 if not port: raise RuntimeError('No Arduino serial port found')
                 print('Connecting to', port, flush=True)
-                with serial.Serial(port, BAUD, timeout=.5) as connection:
+                with serial.Serial(port, args.baud, timeout=.5) as connection:
+                    print('Connected to %s at %s baud.' % (port, args.baud), flush=True)
                     while True:
                         line = connection.readline().decode('ascii', errors='replace').strip()
                         if line: bridge.on_line(line)
             except (serial.SerialException, OSError, RuntimeError) as exc:
-                bridge.disconnected();print('Serial unavailable:', exc, file=sys.stderr, flush=True);time.sleep(RETRY_SECONDS)
+                bridge.disconnected();print('Cannot open serial port. Check the port name, USB cable, and close Serial Monitor or other bridges:', exc, file=sys.stderr, flush=True);time.sleep(RETRY_SECONDS)
     except KeyboardInterrupt:
         bridge.running = False;print('\nBridge stopped.', flush=True)
 

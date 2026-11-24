@@ -1,0 +1,21 @@
+/* Shared line treatment; adjust these five values to tune the whole interface. */
+:root{--line-subtle:rgba(184,107,255,.28);--line-accent:#00f0ff;--line-width:1px;--shadow-card:none;--shadow-press:0 3px 0 rgba(0,0,0,.35)}
+/* Cards, dialogs, and viewport frames. The brand and pixel artwork are excluded. */
+html body :is(.panel,.page-card,.stat,.deployment-card,.pilot,.rvm-stage,.user-rvm,.user-rvm-stage,.model-page-stage,.impact-card,.activity,.reward,.machine-card,.empty,.help-card,.request-note,.request-success,.searchbar,.map-side,.session-card,.bottle-slot,.world-panel,.profile-card,.auth-card,.hero,.balance,.station-explorer,.station-detail,.hud-menu-panel,.pet-dialog,.pet-card,.share-dialog,.share-card-preview,.modal,.arcade-loader-card,.xot-three-viewer,.world-map-frame,.pac-canvas,.locations-map,.page-map-grid .locations-map,#simPanel,.sw-cartridge,.pairing-connected,.pairing-receipt){border:var(--line-width) solid var(--line-subtle)!important;box-shadow:var(--shadow-card)!important}
+/* Nested surfaces retain their existing fill; removing the line preserves their separation. */
+html body :is(.hero .balance,.station-explorer .station-detail,.station-explorer .station-list button,.panel .stat,.world-panel .leader-row,.profile-card .avatar-preview){border-color:transparent!important;box-shadow:var(--shadow-card)!important}
+/* Quiet controls at rest, including the header's icon buttons and inputs. */
+html body :is(button,.button,input,select,textarea,summary.hud-gear,.language-switch,.rank-bar,progress,.admin-map-filter button):not(.brand):not(.brand *):not(.sw-mascot *):not(.mascot-buddy *){border:var(--line-width) solid var(--line-subtle)!important;box-shadow:var(--shadow-card)!important}
+html body .phone .topbar :is(.player-pill,.header-logout,.header-sound,.hud-info,.hud-gear,.language-switch){border:var(--line-width) solid var(--line-subtle)!important;box-shadow:var(--shadow-card)!important}
+html body .phone .topbar .language-switch button{border-color:transparent!important;box-shadow:none!important}
+html body .phone .topbar .language-switch button[aria-pressed=true],html body .phone .topbar .language-switch button.active{border-color:transparent!important;background-color:rgba(0,240,255,.16)!important;box-shadow:none!important}
+html body :is(button,.button,input,select,textarea,summary.hud-gear):is(:hover,:focus-visible){border-color:var(--line-accent)!important}
+html body :is(button,.button,input,select,textarea,summary):focus-visible{outline:2px solid var(--line-accent)!important;outline-offset:2px}
+html body :is(button,.button)[aria-pressed=true],html body :is(button,.button)[aria-selected=true],html body :is(.station-list,.station-strip,.admin-map-filter) button[aria-pressed=true],html body .phone .nav button.active{border-color:var(--line-accent)!important;background-color:rgba(0,240,255,.16)!important;box-shadow:var(--shadow-card)!important}
+/* Main QR call to action is the only raised button. */
+html body .phone .scan-cta{border:var(--line-width) solid transparent!important;box-shadow:var(--shadow-press)!important}
+html body .phone .scan-cta:focus-visible{outline:2px solid var(--line-accent)!important;outline-offset:2px}
+/* Single, quiet frame without the stacked neon offsets. */
+html body .phone{border:2px solid transparent!important;border-left-color:var(--line-subtle)!important;border-right-color:var(--line-subtle)!important;box-shadow:var(--shadow-card)!important}
+html body .side{border-right:var(--line-width) solid var(--line-subtle)!important;box-shadow:var(--shadow-card)!important}
+html body :is(.xot-three-viewer,.user-rvm-stage,.rvm-stage)::before,html body :is(.xot-three-viewer,.user-rvm-stage,.rvm-stage)::after{border-color:transparent!important;box-shadow:none!important}

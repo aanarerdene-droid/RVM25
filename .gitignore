@@ -1,5 +1,8 @@
 # Local account data and secrets
 /data/private/
+*hardware-key*
+*.key
+*.pem
 *.sqlite3
 *.sqlite3-*
 .env
@@ -22,3 +25,4 @@ node_modules/
 venv/
 .venv/
 env/
+.local-deps/
