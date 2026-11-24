@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+/* Fixed, non-interactive layers shared by the document and the scrollable app canvas. */
+body, body .app {
+  background-color:#2a2b92!important;
+  background-image:
+    repeating-linear-gradient(0deg,rgba(12,14,48,.16) 0 1px,transparent 1px 4px),
+    repeating-linear-gradient(90deg,rgba(12,14,48,.16) 0 1px,transparent 1px 4px),
+    url('sw999-facets.svg'),
+    radial-gradient(circle at 0% 0%,rgba(56,214,235,.32) 0%,rgba(56,214,235,.08) 32%,transparent 60%),
+    radial-gradient(circle at 10% 95%,rgba(88,101,242,.25) 0%,transparent 50%),
+    linear-gradient(155deg,#1f359c 0%,#243ca8 22%,#2a2b92 53%,#362187 78%,#2b1973 100%)!important;
+  background-size:4px 4px,4px 4px,cover,cover,cover,cover!important;
+  background-position:center!important;
+  background-attachment:fixed!important;
+}
+body{min-height:100vh;font-family:'Pixelify Sans','JetBrains Mono',sans-serif!important}
+body .app{min-height:100%}
+body :is(.panel,.page-card,.stat,.deployment-card,.pilot,.impact-card,.activity,.reward,.machine-card,.empty,.help-card,.request-note,.request-success,.map-side,.session-card,.world-panel,.profile-card,.auth-card,.balance){
+  background-color:rgba(22,20,68,.88)!important;
+  background-image:none!important;
+  -webkit-backdrop-filter:blur(6px);
+  backdrop-filter:blur(6px);
+}
+/* Pixelify and Silkscreen lack Cyrillic glyphs; JetBrains Mono supplies them. */
+body :is(.balance-num,.balance-num small), :lang(mn){font-family:'Pixelify Sans','Silkscreen','JetBrains Mono',sans-serif!important}

@@ -1,0 +1,24 @@
+# Local account data and secrets
+/data/private/
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+__pycache__/
+
+!.env.example
+
+# Node / Next.js build artifacts
+node_modules/
+.next/
+
+# Local databases and journals
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Python virtual environments
+venv/
+.venv/
+env/
