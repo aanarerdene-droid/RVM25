@@ -5,6 +5,7 @@ import json
 import csv
 from functools import lru_cache
 import os
+import posixpath
 import sys
 import time
 from collections import defaultdict, deque
@@ -97,32 +98,78 @@ class XOT17Handler(SimpleHTTPRequestHandler):
         return (any(part.startswith('.') for part in Path(unquote(path)).parts if part not in ('.', '..', '/'))
                 or requested == auth_backend.SECRET_FILE.parent or auth_backend.SECRET_FILE.parent in requested.parents
                 or requested == auth_backend.DB or requested == auth_backend.DB.parent or auth_backend.DB.parent in requested.parents
-                or requested.suffix in ('.py', '.sqlite', '.sqlite3', '.db'))
+                or requested == REQUESTS_FILE or requested.suffix in ('.py', '.sqlite', '.sqlite3', '.db'))
 
-    def do_HEAD(self) -> None:
-        path = urlsplit(self.path).path
-        if path.startswith('/api/') or self._blocked_static(path):
-            self.send_error(404); return
-        if path == '/login': self.path = '/login.html'
-        super().do_HEAD()
+    def _viewer(self):
+        with auth_backend.connect() as db:
+            return auth_backend.current(self, db)
 
-    def do_GET(self) -> None:
-        path = urlsplit(self.path).path
-        if path == '/api/rvm/locations':
-            try: self._send_json(200, {'locations': rvm_locations()})
-            except (OSError, ValueError, KeyError): self._send_json(503, {'error': 'Location data unavailable.'})
-            return
-        if auth_backend.handle(self, 'GET', path): return
+    def _redirect(self, target):
+        self.send_response(303)
+        self.send_header('Location', target)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def _forbidden(self, page=False):
+        if not page:
+            self._send_json(403, {'error': 'Admin access required.', 'redirect': '/'});return
+        body=b'<!doctype html><html><head><meta http-equiv="refresh" content="0;url=/"><title>Access denied</title></head><body>Admin access required. <a href="/">Return to the app</a>.</body></html>'
+        self.send_response(403);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(body)));self.end_headers()
+        if self.command != 'HEAD': self.wfile.write(body)
+
+    def _path(self):
+        return posixpath.normpath('/' + unquote(urlsplit(self.path).path).lstrip('/'))
+
+    def _serve_page(self, head=False):
+        path = self._path()
         if self._blocked_static(path):
             self.send_error(404); return
-        if path == '/login':
-            self.path = '/login.html'
-            return super().do_GET()
-        if path == "/api/requests":
-            with REQUEST_LOCK:
-                self._send_json(200, read_requests())
-            return
-        super().do_GET()
+        # Public assets are required by the login page; application HTML is guarded.
+        if path.startswith(('/assets/', '/public/', '/models/')):
+            return super().do_HEAD() if head else super().do_GET()
+        if path.startswith('/api/'):
+            if head: self.send_error(404); return
+            if not path.startswith('/api/hardware/') and path not in ('/api/auth/login','/api/auth/register') and not self._viewer():
+                self._send_json(401, {'error':'Sign in required.'});return
+            if path == '/api/rvm/locations':
+                if not self._viewer(): self._send_json(401, {'error':'Sign in required.'}); return
+                try: self._send_json(200, {'locations': rvm_locations()})
+                except (OSError, ValueError, KeyError): self._send_json(503, {'error':'Location data unavailable.'})
+                return
+            if path == '/api/requests':
+                user=self._viewer()
+                if not user: self._send_json(401, {'error':'Sign in required.'});return
+                if not auth_backend.is_admin(user): self._forbidden();return
+                with REQUEST_LOCK: self._send_json(200, read_requests())
+                return
+            if path.startswith('/api/admin/'):
+                user=self._viewer()
+                if not user: self._send_json(401, {'error':'Sign in required.'});return
+                if not auth_backend.is_admin(user): self._forbidden();return
+            if auth_backend.handle(self, 'GET', path): return
+            self.send_error(404);return
+        user=self._viewer()
+        if path in ('/login','/login.html'):
+            if user: self._redirect('/admin' if auth_backend.is_admin(user) else '/');return
+            self.path='/login.html'
+        else:
+            if not user: self._redirect('/login');return
+            admin_pages={'/admin','/admin/','/index.html','/users.html','/requests.html','/branches.html','/deployment.html','/machine.html'}
+            if path in admin_pages or path.startswith('/admin/'):
+                if not auth_backend.is_admin(user): self._forbidden(page=True);return
+                if path in ('/admin','/admin/'): self.path='/index.html'
+            elif path=='/': self.path='/rewards.html'
+            elif path not in ('/rewards.html','/simulation.html'):
+                # Data files backing the operations dashboard are admin-only.
+                if not auth_backend.is_admin(user): self._forbidden();return
+        return super().do_HEAD() if head else super().do_GET()
+
+    def do_HEAD(self) -> None:
+        self._serve_page(head=True)
+
+    def do_GET(self) -> None:
+        self._serve_page()
 
     def do_PATCH(self) -> None:
         self.do_POST()
@@ -134,6 +181,14 @@ class XOT17Handler(SimpleHTTPRequestHandler):
             self._send_json(403, {'error': 'Invalid origin'}); return
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
             self._send_json(403, {'error': 'Cross-site requests are not allowed'}); return
+        if path.startswith('/api/') and not path.startswith('/api/hardware/') and path not in ('/api/auth/login','/api/auth/register','/api/auth/logout') and not self._viewer():
+            self._send_json(401, {'error':'Sign in required.'});return
+        if path.startswith('/api/admin/'):
+            user=self._viewer()
+            if not user: self._send_json(401, {'error':'Sign in required.'});return
+            if not auth_backend.is_admin(user): self._forbidden();return
+        if path == '/api/requests' and not self._viewer():
+            self._send_json(401, {'error':'Sign in required.'});return
         if path in ('/api/auth/login', '/api/auth/register'):
             with AUTH_LOCK:
                 attempts = AUTH_ATTEMPTS[self.client_address[0]]; cutoff = time.monotonic() - 60

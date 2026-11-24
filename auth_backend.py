@@ -19,6 +19,7 @@ DB = Path(os.environ.get('XOT17_DB_PATH', str(ROOT / 'data' / 'private' / 'accou
 SECRET = os.environ.get('AUTH_SECRET', '').encode()
 SECRET_FILE = ROOT / 'data' / 'private' / 'session.secret'
 SECURE_COOKIE = os.environ.get('XOT17_SECURE_COOKIE', '1' if os.environ.get('RENDER') else '0') == '1'
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', '').strip().lower()
 COOKIE = 'xot17_session'
 TTL = 7 * 24 * 60 * 60
 EMAIL = re.compile(r'^[^\s@]{1,64}@[^\s@.]+(?:\.[^\s@.]+)+$')
@@ -177,8 +178,11 @@ def current(handler, db):
         return db.execute('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=? AND s.id=? AND s.expires>?', (payload.get('sub'),payload.get('sid'),int(time.time()))).fetchone()
     except (ValueError, KeyError): return None
 
+def is_admin(user):
+    return bool(user and (str(user['role']).upper() == 'ADMIN' or (ADMIN_EMAIL and user['email'].strip().lower() == ADMIN_EMAIL)))
+
 def safe(row, admin=False):
-    value = {'id':row['id'],'email':row['email'],'role':row['role'],'points':row['points'],'bottlesRecycled':row['bottles_recycled'],'streak':row['streak'],'createdAt':row['created_at'],'ecoCoins':row['eco_coins'],'irlBottles':row['irl_bottles'],'irlPointsEarned':row['irl_points_earned'],'simBottles':row['sim_bottles']}
+    value = {'id':row['id'],'email':row['email'],'role':'ADMIN' if is_admin(row) else 'USER','points':row['points'],'bottlesRecycled':row['bottles_recycled'],'streak':row['streak'],'createdAt':row['created_at'],'ecoCoins':row['eco_coins'],'irlBottles':row['irl_bottles'],'irlPointsEarned':row['irl_points_earned'],'simBottles':row['sim_bottles']}
     value.update(get_rank_info(row['irl_bottles']))
     try:
         config=json.loads(row['avatar_config'])
@@ -203,6 +207,8 @@ def handle(handler, method, path, payload=None):
             if not credentials: handler._send_json(400,{'error':'Enter a valid email and a password of 6–256 characters.'}); return True
             email,password=credentials
             if path.endswith('register'):
+                if ADMIN_EMAIL and email==ADMIN_EMAIL:
+                    handler._send_json(403,{'error':'This account must be provisioned before admin access is enabled.'});return True
                 hashed=hash_password(password); uid=str(uuid.uuid4()); stamp=now()
                 try: db.execute('INSERT INTO users(id,email,password_hash,created_at,last_login_at) VALUES(?,?,?,?,?)',(uid,email,hashed,stamp,stamp))
                 except Exception as exc:
@@ -225,7 +231,9 @@ def handle(handler, method, path, payload=None):
             except (ValueError,KeyError): pass
             handler._send_json(200,{'ok':True},cookie=session_cookie('',0));return True
         if path=='/api/auth/me' and method=='GET':
-            user=current(handler,db);handler._send_json(200,safe(user) if user else {'user':None});return True
+            user=current(handler,db)
+            if not user: handler._send_json(401,{'error':'Sign in required.'});return True
+            handler._send_json(200,safe(user));return True
         if path=='/api/rvm/live-status' and method=='GET':
             user=current(handler,db)
             if not user: handler._send_json(401,{'error':'Sign in required.'});return True
@@ -237,7 +245,7 @@ def handle(handler, method, path, payload=None):
         if path=='/api/admin/users' and method=='GET':
             user=current(handler,db)
             if not user: handler._send_json(401,{'error':'Sign in required.'});return True
-            if user['role']!='ADMIN': handler._send_json(403,{'error':'Admin access required.'});return True
+            if not is_admin(user): handler._send_json(403,{'error':'Admin access required.'});return True
             handler._send_json(200,[safe(row,True) for row in db.execute('SELECT * FROM users ORDER BY created_at DESC, id DESC')]);return True
         if path=='/api/leaderboard' and method=='GET':
             user=current(handler,db)

@@ -1,0 +1,5 @@
+/* One UI typeface everywhere; only the header brand may use pixel lettering. */
+body{--font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,sans-serif;--font-pixel:'Pixelify Sans','Press Start 2P',sans-serif;font-family:var(--font-ui)!important}
+body *,body *::before,body *::after{font-family:var(--font-ui)!important}
+body :is(button,input,select,textarea){font-family:inherit!important}
+body :is(.brand,.brand *,.topbar .brand,.topbar .brand *){font-family:var(--font-pixel)!important}

@@ -88,3 +88,9 @@ A trusted machine sends `POST /api/hardware/deposit` with header `X-Device-Key: 
 
 The bridge captures the active pairing identifier when it receives each sensor event, and retries transient HTTP errors with the same event ID. Events cannot be credited to a later pairing. Events received without a recently confirmed pairing, rejected by the server, or left in memory when the bridge stops are **not credited**; the terminal reports failures. This basic sensor detects obstructions, not PET material or bottle identity, and requires physical calibration and additional validation before it can be used for real rewards. A five-minute pairing expires automatically; issue a fresh code for a new session.
 # RVM25
+
+## Sign-in and administrator access
+
+All app pages require a signed-in account. `/` opens the player app, and `/admin` opens the operations dashboard for an administrator. The server recognizes the `ADMIN` role or an existing account whose email matches `ADMIN_EMAIL` (case-insensitive). Configure `ADMIN_EMAIL` only after creating that account through a trusted bootstrap procedure: while the variable is set, public registration of that address is blocked so an unauthenticated visitor cannot claim it. Alternatively, register an account and run `python3 server.py --make-admin you@example.com` with the same `DATABASE_URL` and `AUTH_SECRET`.
+
+On Render set `DATABASE_URL`, a stable random `AUTH_SECRET` of at least 32 characters, and `ADMIN_EMAIL` if using email-based admin access. Render sets `PORT`; secure cookies default on Render and can be set explicitly with `XOT17_SECURE_COOKIE=1`. `XOT17_DEVICE_KEYS` is required only for configured physical machines. Admin page requests by non-admins return HTTP 403 and direct the browser back to the player app; APIs return a 403 JSON response.

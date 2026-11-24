@@ -10,6 +10,6 @@
   let data;try{data=await res.json()}catch{throw Error('The account service returned an unexpected response. Check that the XOT17 server is running.');}
   if(!res.ok)throw Error(data.error||`Account request failed (${res.status}).`);
   if(mode==='register')try{sessionStorage.setItem('xot17-open-avatar','1')}catch{}
-  const target=new URLSearchParams(location.search).get('next')==='admin'?'index.html':'rewards.html';location.assign(target);
+  const target=String(data.role||'').toUpperCase()==='ADMIN'?'/admin':'/';location.assign(target);
  }catch(err){error.textContent=err instanceof TypeError?'Cannot reach the account server. Check your connection and make sure the XOT17 server is running.':(err.message||'Could not reach the account server.');window.RvmI18n?.translate();submit.disabled=false}});
 })();
