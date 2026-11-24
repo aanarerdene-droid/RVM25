@@ -9,7 +9,9 @@ import secrets
 import sqlite3
 import time
 import uuid
+import unicodedata
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -34,6 +36,24 @@ except (ValueError, TypeError): DEVICE_KEYS = {}
 PAIR_TTL = 300
 DUMMY = None
 RANK_TIERS = (('D', 0, 5), ('B', 5, 6), ('A', 15, 7), ('S', 30, 8), ('SS', 50, 9), ('SSS', 100, 10))
+LEVELS = tuple(dict(level=f'L{i+1}', min_points=lo, max_points=hi, points_per_bottle=rate, reward_mnt=rate) for i, (lo, hi, rate) in enumerate(((0,500,5),(501,750,6),(751,1000,7),(1001,1250,8),(1251,1500,9),(1501,None,10))))
+UB_TIME = ZoneInfo('Asia/Ulaanbaatar')
+
+def month_key(moment=None):
+    return (moment or datetime.now(timezone.utc)).astimezone(UB_TIME).strftime('%Y-%m')
+
+def level_info(points, moment=None):
+    level = next(item for item in LEVELS if points >= item['min_points'] and (item['max_points'] is None or points <= item['max_points']))
+    current = (moment or datetime.now(timezone.utc)).astimezone(UB_TIME)
+    reset = current.replace(year=current.year + (current.month == 12), month=current.month % 12 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return {**level, 'monthly_points': points, 'points_to_next_level': level['max_points'] + 1 - points if level['max_points'] is not None else None, 'next_reset': reset.isoformat()}
+
+def bottle_awards(points, count):
+    awards=[]
+    for _ in range(count):
+        level=level_info(points); after=points+level['points_per_bottle']
+        awards.append((level['points_per_bottle'],level['reward_mnt'],level['level'],points,after));points=after
+    return awards
 
 def get_rank_info(irl_bottles):
     count = max(0, int(irl_bottles))
@@ -42,8 +62,6 @@ def get_rank_info(irl_bottles):
     nxt = RANK_TIERS[index + 1] if index + 1 < len(RANK_TIERS) else None
     return {'rank': name, 'points_per_bottle': rate, 'next_rank': nxt[0] if nxt else None, 'bottles_to_next_rank': nxt[1] - count if nxt else 0}
 
-def deposit_points(start, bottles):
-    return sum(get_rank_info(start + i + 1)['points_per_bottle'] for i in range(bottles))
 AVATAR_OPTIONS = {'hair': ['spiky','twintails','bob','messy','ponytail','buns','fringe','long'], 'hairColor':['#B86BFF','#00F0FF','#8CFF00','#302143','#664334','#E3AA56','#FA91B8','#FFFFFF'], 'face':['eyes','wink','happy','visor','blush'], 'outfit':['hoodie','tee','jacket','vest'], 'outfitColor':['#8A3FFC','#00AFC2','#598C22','#FF2A85','#2E303E','#EFE5FF'], 'bottom':['shorts','cargo','skirt','sneakers'], 'skin':['#FCE0C7','#E9B38F','#C98359','#95573D','#603826'], 'accessory':['none','headset','horn','bottle','leaf']}
 DEFAULT_AVATAR = {key: values[0] for key,values in AVATAR_OPTIONS.items()}
 
@@ -79,6 +97,18 @@ class Database:
 
 def connect(): return Database()
 
+def valid_nickname(value):
+    if not isinstance(value, str): return None
+    value = value.strip()
+    if not 2 <= len(value) <= 20: return None
+    if not all(ch in (' ', '_') or unicodedata.category(ch)[0] in ('L', 'N') for ch in value): return None
+    return value
+
+def default_nickname(email):
+    local = email.split('@', 1)[0]
+    cleaned = ''.join(ch for ch in local if ch in (' ', '_') or unicodedata.category(ch)[0] in ('L', 'N')).strip()[:20]
+    return cleaned if len(cleaned) >= 2 else 'Player'
+
 def init():
     global DUMMY, SECRET
     if not SECRET and DATABASE_URL:
@@ -109,7 +139,13 @@ def init():
             if 'pairing_id' not in pairing_columns: db.execute('ALTER TABLE machine_pairings ADD COLUMN pairing_id TEXT')
         db.execute("CREATE TABLE IF NOT EXISTS pairing_tokens (token_id TEXT PRIMARY KEY, expires BIGINT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS game_rewards (user_id TEXT NOT NULL REFERENCES users(id), reward_day TEXT NOT NULL, coins INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id,reward_day))")
+        db.execute("CREATE TABLE IF NOT EXISTS bottle_ledger (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, month_key TEXT NOT NULL, points_awarded INTEGER NOT NULL, reward_mnt INTEGER NOT NULL, level_at_time TEXT NOT NULL, monthly_points_before INTEGER NOT NULL, monthly_points_after INTEGER NOT NULL, source TEXT NOT NULL)")
+        db.execute('CREATE INDEX IF NOT EXISTS bottle_ledger_user_month ON bottle_ledger(user_id,month_key)')
         if db.postgres:
+            db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_points INTEGER NOT NULL DEFAULT 0')
+            db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_points_month TEXT')
+            db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS reward_mnt INTEGER NOT NULL DEFAULT 0')
+            db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT')
             db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS irl_bottles INTEGER NOT NULL DEFAULT 0')
             db.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS irl_points_earned INTEGER NOT NULL DEFAULT 0')
             columns={row['column_name'] for row in db.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users'")}
@@ -121,6 +157,10 @@ def init():
             db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_recycled_day TEXT")
         else:
             columns={row['name'] for row in db.execute('PRAGMA table_info(users)')}
+            if 'monthly_points' not in columns: db.execute('ALTER TABLE users ADD COLUMN monthly_points INTEGER NOT NULL DEFAULT 0')
+            if 'monthly_points_month' not in columns: db.execute('ALTER TABLE users ADD COLUMN monthly_points_month TEXT')
+            if 'reward_mnt' not in columns: db.execute('ALTER TABLE users ADD COLUMN reward_mnt INTEGER NOT NULL DEFAULT 0')
+            if 'nickname' not in columns: db.execute('ALTER TABLE users ADD COLUMN nickname TEXT')
             if 'avatar_config' not in columns: db.execute("ALTER TABLE users ADD COLUMN avatar_config TEXT NOT NULL DEFAULT '{}'")
             if 'eco_coins' not in columns: db.execute('ALTER TABLE users ADD COLUMN eco_coins INTEGER NOT NULL DEFAULT 0')
             if 'irl_bottles' not in columns: db.execute('ALTER TABLE users ADD COLUMN irl_bottles INTEGER NOT NULL DEFAULT 0')
@@ -128,6 +168,8 @@ def init():
             if 'sim_bottles' not in columns:
                 db.execute('ALTER TABLE users ADD COLUMN sim_bottles INTEGER NOT NULL DEFAULT 0')
                 db.execute('UPDATE users SET sim_bottles=bottles_recycled')
+        for row in db.execute("SELECT id,email FROM users WHERE nickname IS NULL OR TRIM(nickname)=''").fetchall():
+            db.execute("UPDATE users SET nickname=? WHERE id=? AND (nickname IS NULL OR TRIM(nickname)='')", (default_nickname(row['email']),row['id']))
     if not DATABASE_URL:
         try: os.chmod(DB, 0o600)
         except OSError: pass
@@ -182,8 +224,11 @@ def is_admin(user):
     return bool(user and (str(user['role']).upper() == 'ADMIN' or (ADMIN_EMAIL and user['email'].strip().lower() == ADMIN_EMAIL)))
 
 def safe(row, admin=False):
-    value = {'id':row['id'],'email':row['email'],'role':'ADMIN' if is_admin(row) else 'USER','points':row['points'],'bottlesRecycled':row['bottles_recycled'],'streak':row['streak'],'createdAt':row['created_at'],'ecoCoins':row['eco_coins'],'irlBottles':row['irl_bottles'],'irlPointsEarned':row['irl_points_earned'],'simBottles':row['sim_bottles']}
+    value = {'id':row['id'],'email':row['email'],'nickname':row['nickname'] or default_nickname(row['email']),'role':'ADMIN' if is_admin(row) else 'USER','points':row['points'],'bottlesRecycled':row['bottles_recycled'],'streak':row['streak'],'createdAt':row['created_at'],'ecoCoins':row['eco_coins'],'irlBottles':row['irl_bottles'],'irlPointsEarned':row['irl_points_earned'],'simBottles':row['sim_bottles']}
     value.update(get_rank_info(row['irl_bottles']))
+    value['levelInfo']=level_info(row['monthly_points'] if row['monthly_points_month']==month_key() else 0)
+    value['rewardMnt']=row['reward_mnt']
+    value['points_per_bottle']=value['levelInfo']['points_per_bottle']
     try:
         config=json.loads(row['avatar_config'])
         value['avatarConfig']={key: config.get(key) if config.get(key) in choices else DEFAULT_AVATAR[key] for key,choices in AVATAR_OPTIONS.items()} if isinstance(config,dict) else dict(DEFAULT_AVATAR)
@@ -191,8 +236,8 @@ def safe(row, admin=False):
     if admin: value['lastLoginAt'] = row['last_login_at']
     return value
 
-def valid_auth(payload):
-    if not isinstance(payload,dict) or set(payload) != {'email','password'}: return None
+def valid_auth(payload, register=False):
+    if not isinstance(payload,dict) or set(payload) != ({'email','password','nickname'} if register else {'email','password'}): return None
     email,password = payload['email'],payload['password']
     if not isinstance(email,str) or not isinstance(password,str): return None
     email=email.strip().lower()
@@ -200,17 +245,23 @@ def valid_auth(payload):
     return email,password
 
 def handle(handler, method, path, payload=None):
-    if path not in ('/api/auth/register','/api/auth/login','/api/auth/logout','/api/auth/me','/api/user/sync','/api/user/avatar','/api/admin/users','/api/leaderboard','/api/game/reward','/api/scan/irl','/api/hardware/deposit','/api/rvm/live-status','/api/rvm/pair','/api/rvm/unpair','/api/hardware/heartbeat'): return False
+    if path not in ('/api/levels','/api/auth/register','/api/auth/login','/api/auth/logout','/api/auth/me','/api/user/sync','/api/user/avatar','/api/admin/users','/api/leaderboard','/api/game/reward','/api/scan/irl','/api/hardware/deposit','/api/rvm/live-status','/api/rvm/pair','/api/rvm/unpair','/api/hardware/heartbeat'): return False
     with connect() as db:
+        if path=='/api/levels' and method=='GET':
+            if not current(handler,db): handler._send_json(401,{'error':'Sign in required.'});return True
+            handler._send_json(200,{'levels':LEVELS});return True
         if path in ('/api/auth/register','/api/auth/login') and method=='POST':
-            credentials=valid_auth(payload)
+            registering=path.endswith('register')
+            if registering and isinstance(payload,dict) and valid_nickname(payload.get('nickname')) is None:
+                handler._send_json(400,{'error':'Nickname must be 2–20 letters, numbers, spaces, or underscores.'});return True
+            credentials=valid_auth(payload, registering)
             if not credentials: handler._send_json(400,{'error':'Enter a valid email and a password of 6–256 characters.'}); return True
             email,password=credentials
             if path.endswith('register'):
                 if ADMIN_EMAIL and email==ADMIN_EMAIL:
                     handler._send_json(403,{'error':'This account must be provisioned before admin access is enabled.'});return True
                 hashed=hash_password(password); uid=str(uuid.uuid4()); stamp=now()
-                try: db.execute('INSERT INTO users(id,email,password_hash,created_at,last_login_at) VALUES(?,?,?,?,?)',(uid,email,hashed,stamp,stamp))
+                try: db.execute('INSERT INTO users(id,email,password_hash,created_at,last_login_at,nickname) VALUES(?,?,?,?,?,?)',(uid,email,hashed,stamp,stamp,valid_nickname(payload['nickname'])))
                 except Exception as exc:
                     if not isinstance(exc, sqlite3.IntegrityError) and not (db.postgres and getattr(exc, 'pgcode', None) == '23505'):
                         raise
@@ -250,7 +301,7 @@ def handle(handler, method, path, payload=None):
         if path=='/api/leaderboard' and method=='GET':
             user=current(handler,db)
             if not user: handler._send_json(401,{'error':'Sign in required.'});return True
-            query="SELECT id,irl_bottles,avatar_config,ROW_NUMBER() OVER (ORDER BY irl_bottles DESC,created_at ASC,id ASC) AS place FROM users"
+            query="SELECT id,irl_bottles,avatar_config,nickname,ROW_NUMBER() OVER (ORDER BY irl_bottles DESC,created_at ASC,id ASC) AS place FROM users"
             rows=db.execute('SELECT * FROM ('+query+') ranked WHERE place<=25 OR id=? ORDER BY place',(user['id'],)).fetchall()
             me=next((r for r in rows if r['id']==user['id']),None)
             ahead=None
@@ -260,7 +311,7 @@ def handle(handler, method, path, payload=None):
                 try: config=json.loads(r['avatar_config'])
                 except (ValueError, TypeError): config={}
                 config=config if isinstance(config,dict) else {}
-                return {'name':'PLAYER-'+r['id'][:6].upper(),'avatarConfig':{k:config.get(k) if config.get(k) in choices else DEFAULT_AVATAR[k] for k,choices in AVATAR_OPTIONS.items()},'bottlesRecycled':r['irl_bottles'],'place':r['place'],'isMe':r['id']==user['id']}
+                return {'name':r['nickname'] or 'Player','avatarConfig':{k:config.get(k) if config.get(k) in choices else DEFAULT_AVATAR[k] for k,choices in AVATAR_OPTIONS.items()},'bottlesRecycled':r['irl_bottles'],'place':r['place'],'isMe':r['id']==user['id']}
             handler._send_json(200,{'players':[public(r) for r in rows if r['place']<=25],'me':public(me) if me else None,'toOvertake':max(1,ahead['irl_bottles']-me['irl_bottles']+1) if ahead else 0});return True
         if path=='/api/rvm/pair' and method=='POST':
             user=current(handler,db)
@@ -314,12 +365,17 @@ def handle(handler, method, path, payload=None):
             if not row: db.rollback();handler._send_json(404,{'error':'Player not found.'});return True
             claim=db.execute('INSERT INTO receipt_claims(receipt_id,user_id,claimed_at,bottles) VALUES(?,?,?,?) ON CONFLICT(receipt_id) DO NOTHING',('hardware:'+machine+':'+payload['event_id'],uid,now(),count))
             if claim.rowcount!=1: db.rollback();handler._send_json(409,{'error':'Deposit already credited.'});return True
-            before=get_rank_info(row['irl_bottles']);earned=deposit_points(row['irl_bottles'],count)
+            before=get_rank_info(row['irl_bottles']);stamp=datetime.now(timezone.utc);month=month_key(stamp)
+            monthly=row['monthly_points'] if row['monthly_points_month']==month else 0
+            previous_level=level_info(monthly)['level'];awards=bottle_awards(monthly,count)
+            earned=sum(a[0] for a in awards); reward=sum(a[1] for a in awards);monthly=awards[-1][4]
+            for points,reward_one,level,prior,after in awards:
+                db.execute('INSERT INTO bottle_ledger(id,user_id,created_at,month_key,points_awarded,reward_mnt,level_at_time,monthly_points_before,monthly_points_after,source) VALUES(?,?,?,?,?,?,?,?,?,?)',(str(uuid.uuid4()),uid,stamp.isoformat(),month,points,reward_one,level,prior,after,machine))
             today=datetime.now(timezone.utc).date();last=row['last_recycled_day'];streak=row['streak'] if last==today.isoformat() else (row['streak']+1 if last==(today-timedelta(days=1)).isoformat() else 1)
-            db.execute('UPDATE users SET irl_bottles=irl_bottles+?,points=points+?,irl_points_earned=irl_points_earned+?,streak=?,last_recycled_day=? WHERE id=?',(count,earned,earned,streak,today.isoformat(),uid))
+            db.execute('UPDATE users SET irl_bottles=irl_bottles+?,points=points+?,irl_points_earned=irl_points_earned+?,reward_mnt=reward_mnt+?,monthly_points=?,monthly_points_month=?,streak=?,last_recycled_day=? WHERE id=?',(count,earned,earned,reward,monthly,month,streak,today.isoformat(),uid))
             db.execute('INSERT INTO machine_heartbeats(machine_id,last_heartbeat_at,sensor) VALUES(?,?,?) ON CONFLICT(machine_id) DO UPDATE SET last_heartbeat_at=excluded.last_heartbeat_at,sensor=excluded.sensor',(machine,int(time.time()),'ultrasonic'))
             row=db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();db.commit();info=get_rank_info(row['irl_bottles'])
-            handler._send_json(200,{'player':safe(row),'accepted':count,'earned_points':earned,'ranked_up':before['rank']!=info['rank'],**info});return True
+            handler._send_json(200,{'player':safe(row),'accepted':count,'earned_points':earned,'reward_mnt':reward,'level_up':previous_level!=level_info(monthly)['level'],'ranked_up':before['rank']!=info['rank'],**info,'points_per_bottle':level_info(monthly)['points_per_bottle']});return True
         if path=='/api/scan/irl' and method=='POST':
             handler._send_json(410,{'error':'Receipt credits are disabled. Pair with a machine.'});return True
         if path=='/api/game/reward' and method=='POST':

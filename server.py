@@ -10,7 +10,6 @@ import sys
 import time
 from collections import defaultdict, deque
 import auth_backend
-from cu_locations_fallback import FALLBACK_LOCATIONS
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -36,52 +35,38 @@ def read_requests() -> list[dict]:
 
 @lru_cache(maxsize=1)
 def rvm_locations():
-    """Read a portable CSV when available; preserve unknowns in the bundled snapshot."""
-    candidates = (ROOT / 'ub_cu_17_locations.csv', ROOT / 'data' / 'ub_cu_17_locations.csv',
-                  ROOT / 'static' / 'ub_cu_17_locations.csv', Path.home() / 'Downloads' / 'ub_cu_17_locations.csv')
-    def first(row, *keys):
-        for key in keys:
-            value = row.get(key)
-            if value is not None and str(value).strip(): return str(value).strip()
-        return None
-    def number(value):
-        try: return float(value)
-        except (TypeError, ValueError): return None
-    def normalized(rows):
-        result=[]
-        for i, raw in enumerate(rows, 1):
-            row={str(k).strip().lower():v for k,v in raw.items() if k is not None}
-            name=first(row,'cu_location_or_area','name','branch','store_name','branch_name')
-            if not name: raise ValueError('Location name is missing')
-            place_id=first(row,'map_place_id','google_place_id','place_id')
-            match=next((item for item in FALLBACK_LOCATIONS if place_id and item.get('place_id')==place_id),None)
-            lat=number(first(row,'latitude','lat'));lon=number(first(row,'longitude','lng','lon'))
-            if lat is None and lon is None and match: lat,lon=match['latitude'],match['longitude']
-            if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180): lat=lon=None
-            record={'id':first(row,'machine_id','id') or f'RVM-CU-{i:02}', 'code':f'{i:02}', 'number':i,
-                'name':name, 'place_id':place_id,'note':first(row,'location_note','note') or '',
-                'city':first(row,'city') or 'Ulaanbaatar, Mongolia', 'ranking_basis':first(row,'ranking_basis'),
-                'latitude':lat,'longitude':lon,'lat':lat,'lng':lon,
-                'district':first(row,'district','district_or_soum') or (match['district'] if match else None),
-                'address':first(row,'address','street_address') or (match['address'] if match else None),
-                'matched_name':match['matched_name'] if match else None,
-                'coordinate_source':('CSV' if first(row,'lat','latitude') and first(row,'lng','lon','longitude') else match['coordinate_source'] if match else None),
-                'machine_status':'unverified','status':'UNVERIFIED'}
-            result.append(record)
-        if len(result)!=17: raise ValueError('Expected 17 candidates')
-        return result
-    for path in candidates:
-        try:
-            with path.open(encoding='utf-8-sig', newline='') as source:
-                return normalized(list(csv.DictReader(source)))
-        except (OSError, UnicodeError, ValueError, csv.Error):
-            continue
-    return [item.copy() for item in FALLBACK_LOCATIONS]
+    """Candidate data shares the CU directory source used by the admin map."""
+    try:
+        data = json.loads((ROOT / 'data' / 'cu_branches.json').read_text(encoding='utf-8'))
+        if not isinstance(data, dict) or not isinstance(data.get('branches'), list) or not isinstance(data.get('candidates'), list):
+            raise ValueError('Invalid CU data format')
+    except (OSError, ValueError) as exc:
+        from cu_locations_fallback import FALLBACK_LOCATIONS
+        print(f'Warning: shared CU data unavailable ({exc}); using bundled candidate snapshot.', file=sys.stderr)
+        return [{**item, 'district': item.get('district') or ('Сүхбаатар' if item.get('id') in ('RVM-CU-05', 'RVM-CU-12') else None)} for item in FALLBACK_LOCATIONS]
+    branches = {branch['id']: branch for branch in data['branches']}
+    locations = []
+    for candidate in data['candidates']:
+        item = candidate.copy()
+        branch = branches.get(item.get('branch_id'))
+        if branch:
+            item.update(latitude=branch.get('latitude'), longitude=branch.get('longitude'), lat=branch.get('latitude'), lng=branch.get('longitude'), address=branch.get('address'))
+        locations.append(item)
+    missing_coords = [x['id'] for x in locations if x.get('latitude') is None or x.get('longitude') is None]
+    missing_districts = [x['id'] for x in locations if not x.get('district')]
+    if missing_coords: print('Warning: CU candidates missing coordinates: ' + ', '.join(missing_coords), file=sys.stderr)
+    if missing_districts: print('Warning: CU candidates missing district: ' + ', '.join(missing_districts), file=sys.stderr)
+    return locations
 
 
 class XOT17Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    def end_headers(self):
+        if getattr(self, '_private_response', False):
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
 
     def _send_json(self, status: int, payload: object, cookie: str = "") -> None:
         encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -105,7 +90,7 @@ class XOT17Handler(SimpleHTTPRequestHandler):
             return auth_backend.current(self, db)
 
     def _redirect(self, target):
-        self.send_response(303)
+        self.send_response(302)
         self.send_header('Location', target)
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', '0')
@@ -129,6 +114,7 @@ class XOT17Handler(SimpleHTTPRequestHandler):
         if path.startswith(('/assets/', '/public/', '/models/')):
             return super().do_HEAD() if head else super().do_GET()
         if path.startswith('/api/'):
+            self._private_response=True
             if head: self.send_error(404); return
             if not path.startswith('/api/hardware/') and path not in ('/api/auth/login','/api/auth/register') and not self._viewer():
                 self._send_json(401, {'error':'Sign in required.'});return
@@ -149,6 +135,7 @@ class XOT17Handler(SimpleHTTPRequestHandler):
                 if not auth_backend.is_admin(user): self._forbidden();return
             if auth_backend.handle(self, 'GET', path): return
             self.send_error(404);return
+        self._private_response=True
         user=self._viewer()
         if path in ('/login','/login.html'):
             if user: self._redirect('/admin' if auth_backend.is_admin(user) else '/');return
@@ -176,6 +163,7 @@ class XOT17Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
+        if path.startswith('/api/'): self._private_response=True
         origin = self.headers.get('Origin')
         if origin and origin not in ('http://' + self.headers.get('Host', ''), 'https://' + self.headers.get('Host', '')):
             self._send_json(403, {'error': 'Invalid origin'}); return
@@ -246,6 +234,7 @@ def main() -> None:
         if not 1 <= port <= 65535: raise ValueError()
     except ValueError:
         raise SystemExit('PORT must be a number between 1 and 65535.')
+    rvm_locations()  # Report incomplete candidate records at startup.
     address = (host, port)
     server = ThreadingHTTPServer(address, XOT17Handler)
     print(f"XOT17 preview: http://localhost:{address[1]}/ (bound to {host})")

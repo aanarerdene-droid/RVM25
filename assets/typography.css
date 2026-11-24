@@ -1,5 +1,24 @@
-/* One UI typeface everywhere; only the header brand may use pixel lettering. */
-body{--font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,sans-serif;--font-pixel:'Pixelify Sans','Press Start 2P',sans-serif;font-family:var(--font-ui)!important}
-body *,body *::before,body *::after{font-family:var(--font-ui)!important}
+@import url('https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&subset=cyrillic,cyrillic-ext&display=swap');
+/* Cyrillic-only aliases preserve the system font for Latin in English. */
+@font-face{font-family:"UI Cyrillic";font-style:normal;font-weight:400;font-display:swap;src:local("PT Sans"),local("PTSans-Regular"),url("https://fonts.gstatic.com/s/ptsans/v9/jizaRExUiTo99u79D0aExdGM.woff2") format("woff2");unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1}
+@font-face{font-family:"UI Cyrillic";font-style:normal;font-weight:400;font-display:swap;src:local("PT Sans"),local("PTSans-Regular"),url("https://fonts.gstatic.com/s/ptsans/v9/jizaRExUiTo99u79D0-ExdGM.woff2") format("woff2");unicode-range:U+0460-052F,U+1C80-1C8F,U+2DE0-2DFF,U+A640-A69F}
+@font-face{font-family:"UI Cyrillic";font-style:normal;font-weight:700;font-display:swap;src:local("PT Sans Bold"),local("PTSans-Bold"),url("https://fonts.gstatic.com/s/ptsans/v9/jizfRExUiTo99u79B_mh0OqtLQ0Z.woff2") format("woff2");unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1}
+@font-face{font-family:"UI Cyrillic";font-style:normal;font-weight:700;font-display:swap;src:local("PT Sans Bold"),local("PTSans-Bold"),url("https://fonts.gstatic.com/s/ptsans/v9/jizfRExUiTo99u79B_mh0OOtLQ0Z.woff2") format("woff2");unicode-range:U+0460-052F,U+1C80-1C8F,U+2DE0-2DFF,U+A640-A69F}
+/* English uses the system stack. Mongolian uses PT Sans and its Cyrillic glyphs. */
+html{--font-ui:"UI Cyrillic",-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,sans-serif;--font-pixel:'Pixelify Sans','Press Start 2P','PT Sans',sans-serif}
+html[lang="mn"]{--font-ui:'PT Sans','Helvetica Neue',Arial,sans-serif}
+body,body *,body *::before,body *::after{font-family:var(--font-ui)!important}
 body :is(button,input,select,textarea){font-family:inherit!important}
 body :is(.brand,.brand *,.topbar .brand,.topbar .brand *){font-family:var(--font-pixel)!important}
+header.top .header-sound{display:inline-grid;place-items:center;width:28px;height:28px;padding:4px;border:1px solid #b86bff;background:#252153;color:#00f0ff;cursor:pointer}header.top .header-sound svg{width:16px;height:16px}header.top .header-sound.sound-off{color:#7883a8}header.top .header-logout{padding:6px;border:1px solid #b86bff;background:#252153;color:#fff;cursor:pointer}header.top .header-sound:focus-visible,header.top .header-logout:focus-visible{outline:3px solid #8cff00}
+/* Override legacy Mongolian pixel-font selectors while preserving the banner. */
+html[lang="mn"] body,html[lang="mn"] body *,html[lang="mn"] body *::before,html[lang="mn"] body *::after{font-family:var(--font-ui)!important}
+html[lang="mn"] body :is(button,input,select,textarea,.button,.pet-tabs button,.pet-controls button,.avatar-tabs button,.avatar-choice){font-family:inherit!important}
+html[lang="mn"] body :is(.brand,.brand *,.topbar .brand,.topbar .brand *){font-family:var(--font-pixel)!important}
+
+/* A readable shared scale without changing the page-heading sizing. */
+html body :is(p,small,label,li,td,th,.station-detail,.station-notice,.station-list button){overflow-wrap:anywhere}
+html body :is(button,.button){white-space:normal;overflow-wrap:anywhere}
+html[lang="mn"] body :not(.brand):not(.brand *){letter-spacing:normal!important}
+/* Icon-only controls remain square; text navigation can wrap within its tab. */
+.phone .nav .nav-text{white-space:normal!important;overflow-wrap:normal;text-align:center}

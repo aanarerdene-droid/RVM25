@@ -1,0 +1,13 @@
+/* One persisted switch controls background audio and arcade effects. */
+(()=>{
+ const key='sw999-sfx';let enabled=true,context=null,audio=null,button=null;
+ try{const saved=localStorage.getItem(key);enabled=saved===null?true:saved==='on';if(saved===null)localStorage.setItem(key,'on')}catch{}
+ const normal='<path fill="currentColor" d="M1 6h3l4-3v10l-4-3H1zM10 5h2v1h1v4h-1v1h-2v-1h1V6h-1zM13 3h1v2h1v6h-1v2h-1v-2h1V5h-1z"/>';
+ const slash='<path fill="#ff2a85" d="M1 1h2v2h2v2h2v2h2v2h2v2h2v2h2v2h-2v-2h-2v-2H9V9H7V7H5V5H3V3H1z"/>';
+ function render(){if(!button)return;button.setAttribute('aria-pressed',String(enabled));button.setAttribute('aria-label',enabled?'Sound on':'Sound off');button.title=enabled?'Sound on':'Sound off';button.innerHTML='<svg viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">'+normal+(enabled?'':slash)+'</svg>';button.classList.toggle('sound-off',!enabled)}
+ function play(){if(enabled&&audio&&audio.paused){const p=audio.play();if(p?.catch)p.catch(()=>{})}}
+ function set(value){enabled=value;try{localStorage.setItem(key,enabled?'on':'off')}catch{}if(!enabled&&audio)audio.pause();render();if(enabled)play()}
+ window.xotArcadeBlip=kind=>{if(!enabled)return;try{context=context||new(window.AudioContext||window.webkitAudioContext)();if(context.state==='suspended')context.resume().catch(()=>{});const now=context.currentTime,osc=context.createOscillator(),gain=context.createGain();osc.type='square';osc.frequency.setValueAtTime(kind==='coin'?660:kind==='chomp'?230:440,now);osc.frequency.exponentialRampToValueAtTime(kind==='coin'?1100:kind==='chomp'?105:300,now+.09);gain.gain.setValueAtTime(.035,now);gain.gain.exponentialRampToValueAtTime(.001,now+.11);osc.connect(gain);gain.connect(context.destination);osc.start(now);osc.stop(now+.12)}catch{}};
+ function init(){const header=document.querySelector('.topbar,.top');if(!header)return;audio=document.getElementById('backgroundMusic');if(audio)audio.volume=.25;button=document.createElement('button');button.type='button';button.className='header-sound';button.addEventListener('click',()=>set(!enabled));const menu=header.querySelector('.hud-menu'),actions=header.querySelector('.hud-actions');if(menu&&actions)actions.insertBefore(button,menu);else header.append(button);render();if(enabled)play();document.addEventListener('click',play);document.addEventListener('touchend',play,{passive:true})}
+ window.addEventListener('storage',e=>{if(e.key===key){enabled=e.newValue!=='off';if(!enabled&&audio)audio.pause();render();if(enabled)play()}});if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
+})();

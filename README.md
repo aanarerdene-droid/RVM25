@@ -10,7 +10,7 @@ Then visit `http://localhost:8000`.
 
 Open the admin dashboard at `http://localhost:8000/` and the customer app at `http://localhost:8000/rewards.html`. Both pages use the local request API; customer requests are saved in `data/support_requests.json` and the admin inbox refreshes every three seconds. Keep `server.py` running while using the request flow. Opening the HTML files directly bypasses the shared API. The server binds to all interfaces and reads its port from `PORT`.
 
-The deployment planner in `index.html` deliberately leaves branches unassigned until store-traffic data is supplied. Add reviewed recommendations to `data/deployment_plan.js`: high-footfall sites can be marked `rvm`, and lower-volume weekly-pickup sites can be marked `compactor`. The current location data contains branch listings, not visits, bottle volume, or verified machine placement. The ten numbered areas and audience descriptions from the team template are shown as proposed pilot candidates in `data/pilot_candidates.js`; they are not verified branch addresses or measured traffic rankings.
+The deployment planner in `index.html` deliberately leaves branches unassigned until store-traffic data is supplied. Add reviewed recommendations to `data/deployment_plan.js`: reviewed sites can be marked `rvm`. The current location data contains branch listings, not visits, bottle volume, or verified machine placement. The ten numbered areas and audience descriptions from the team template are shown as proposed pilot candidates in `data/pilot_candidates.js`; they are not verified branch addresses or measured traffic rankings.
 
 The CU, GS25, and MGL directory is generated from `cu_mongolia_642_branch_locations.csv`, `gs25_mongolia_branch_locations.csv`, `mglstore_food_organization_locations.csv`, and `data/store_locations.js`. The location map is drawn locally from supplied coordinates, so it works without external map tiles. CU and GS25 entries have coordinates; MGL has 535 address-only listings with Google Maps search links and cannot appear as map pins until coordinates are added. Machine placements, fill levels, bottle counts, rewards activity, and dashboard totals are illustrative prototype data; they are not live machine or user records.
 
@@ -94,3 +94,17 @@ The bridge captures the active pairing identifier when it receives each sensor e
 All app pages require a signed-in account. `/` opens the player app, and `/admin` opens the operations dashboard for an administrator. The server recognizes the `ADMIN` role or an existing account whose email matches `ADMIN_EMAIL` (case-insensitive). Configure `ADMIN_EMAIL` only after creating that account through a trusted bootstrap procedure: while the variable is set, public registration of that address is blocked so an unauthenticated visitor cannot claim it. Alternatively, register an account and run `python3 server.py --make-admin you@example.com` with the same `DATABASE_URL` and `AUTH_SECRET`.
 
 On Render set `DATABASE_URL`, a stable random `AUTH_SECRET` of at least 32 characters, and `ADMIN_EMAIL` if using email-based admin access. Render sets `PORT`; secure cookies default on Render and can be set explicitly with `XOT17_SECURE_COOKIE=1`. `XOT17_DEVICE_KEYS` is required only for configured physical machines. Admin page requests by non-admins return HTTP 403 and direct the browser back to the player app; APIs return a 403 JSON response.
+
+New accounts require a 2–20 character nickname (letters, numbers, spaces, and underscores). Nicknames are display names and do not need to be unique; email remains the sign-in and administrator identifier. On startup the server adds the `nickname` column if needed and assigns existing accounts a name derived from their email, without changing their password or progress.
+
+### Admin CU map data
+
+Edit `data/cu_branches.json` when a CU branch is added or moved. It supplies the admin map and user-side candidate map. Its `branches` array contains directory entries in this format:
+
+```json
+{"id":"unique-stable-id","name":"CU branch name","address":"Street address","latitude":47.918,"longitude":106.917,"hasRvm":false,"rvmStatus":"unknown","reviewReason":""}
+```
+
+Use real numeric WGS84 latitude and longitude, and set `hasRvm` to `true` only after confirming a machine; use `rvmStatus` of `active`, `offline`, `planned`, or `unknown`. For a closed or unverified branch, set a descriptive `reviewReason` so it is excluded from the map, or remove it after review. Invalid coordinates, duplicate IDs, duplicate names, and duplicate coordinates are also excluded. The initial data is an unverified directory snapshot: `hasRvm: false` means no RVM is confirmed in the available data, not that a machine is definitely absent. The 10 entries flagged with `reviewReason` have duplicate names and should be reconciled before mapping. This file is available only to signed-in administrators through the existing server route guard.
+
+The `candidates` array contains the 17 user-map candidates. A candidate with `branch_id` reads its coordinates and address from the matching entry in `branches`; update those fields there. Candidates without a verified match retain null coordinates and remain listed without a map pin. The server warns about missing coordinates or districts at startup.
